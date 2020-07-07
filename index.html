@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+  <title>CV Transcript Widget</title>
+
+  <script src="https://sdk-cdn.mypurecloud.com/javascript/62.0.0/purecloud-platform-client-v2.min.js"></script>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" />
+</head>
+
+<body>
+  <div class="container">
+    <div class="row">
+      <div class="col-1"></div>
+      <div class="col">
+        <p class="h5 mx-auto" style="display: block; width: 400px;">
+          Session ID:
+          <strong><span id="session-id"></span></strong>
+        </p>
+      </div>
+      <div class="col-1"></div>
+    </div>
+    <div class="row">
+      <div class="col">
+        <table class="table table-striped table-sm">
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Answer</th>
+            </tr>
+          </thead>
+          <tbody id="session-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-1"></div>
+      <div class="col">
+        <span id="fetching-status" class="mx-auto text-center" style="display: block; width: 400px;"></span>
+      </div>
+      <div class="col-1"></div>
+    </div>
+  </div>
+
+  <script>
+    // PureCloud OAuth information
+    const platformClient = require('platformClient');
+    const client = platformClient.ApiClient.instance;
+    client.setEnvironment(platformClient.PureCloudRegionHosts.ap_southeast_2);
+    const clientId = 'f8daa11b-e599-4da8-a679-d6e807fe94e7';
+    // const redirectUri = 'https://richmason.github.io/purecloud-widget-interaction-sample/';
+    // const redirectUri = 'https://help1.sing.apac.creativevirtual.com/ntt_ui/transcript_widget.html';
+    const redirectUri = 'https://demo2.aus.apac.creativevirtual.com/ndis_ui/transcript_widget.html';
+
+    // API instances
+    const usersApi = new platformClient.UsersApi();
+    const notificationsApi = new platformClient.NotificationsApi();
+    const analyticsApi = new platformClient.AnalyticsApi();
+    const routingApi = new platformClient.RoutingApi();
+
+    // Variables
+    let userId = '';
+    let topicId = ''; // Topic string for NotificationsApi
+
+    client
+      .loginImplicitGrant(clientId, redirectUri)
+      .then(data => {
+        // Get details of current user
+        return usersApi.getUsersMe();
+      })
+      .then(userMe => {
+        userId = userMe.id;
+
+        // Create a Notifications Channel
+        return notificationsApi.postNotificationsChannels();
+      })
+      .then(data => {
+        // Callback function a notification is received from the wss
+        let socket = new WebSocket(data.connectUri);
+        socket.onmessage = interactionCallback;
+
+        topicId = 'v2.users.' + userId + '.conversations.chats';
+
+        // Subscribe to Call Conversations of Current user.
+        let topic = [
+          {
+            id: topicId
+          }
+        ];
+        return notificationsApi.postNotificationsChannelSubscriptions(data.id, topic);
+      })
+      .then(data => console.log('Succesfully set-up Client App.'))
+
+      // Error Handling
+      .catch(e => console.log(e));
+
+    /**
+     * Callback function when interaction comes in for agent
+     */
+    async function interactionCallback(event) {
+      let data = JSON.parse(event.data);
+      let topic = data.topicName;
+      let eventBody = data.eventBody;
+
+      // Once chat arrives display data
+      if (topic === topicId) {
+        console.log(eventBody);
+
+        let customer = eventBody.participants.filter(participant => participant.purpose === 'customer')[0];
+        let agent = eventBody.participants.filter(participant => participant.purpose === 'agent')[0];
+
+        // get the session ID
+        let sessId = customer.attributes['context.sessionId'];
+        console.log('session:', sessId);
+
+        // get the location of the transcript JSP
+        let transLoc = customer.attributes['context.transcriptLocation']
+        console.log('transLoc:', transLoc);
+
+        // Build the URL
+        let transUrl = `${transLoc}/transcript.jsp?sessionid=${sessId}`
+        console.log(transUrl);
+
+        let currentSessId = document.getElementById('session-id').innerText;
+        console.log('current session:', currentSessId);
+
+        // get the state
+        let state = customer.state;
+        console.log('state:', state);
+
+        // Get held value of agent
+        let held = agent.held;
+        console.log('held:', held);
+
+        // only continue if the agent is not held
+        if (!held) {
+          // check to see if already showing the session transcaripts
+          if (sessId != currentSessId) {
+            console.log('sessions do not match, so going to fetch data ...');
+
+            // let user know conv history is being fetched
+            document.getElementById('fetching-status').innerText = 'Fetching conversation history...';
+
+            // set the session ID field
+            document.getElementById('session-id').innerText = sessId;
+
+            // First clear the table
+            const tableBodyNode = document.getElementById('session-table-body');
+            while (tableBodyNode.firstChild) {
+              tableBodyNode.removeChild(tableBodyNode.firstChild);
+            }
+
+            try {
+              // get the transcript from server and display in the table
+              const response = await fetch(
+                transUrl
+              );
+              const jsonRes = await response.json();
+              jsonRes.forEach(transaction => {
+                // create all the table nodes
+                const trNode = document.createElement('tr');
+                const qNode = document.createElement('td');
+                const aNode = document.createElement('td');
+
+                // Add the Question to a text node
+                const qTextNode = document.createTextNode(transaction.QUESTION);
+
+                // get a clean version of the answer and add to a text node
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = transaction.ANSWER
+                const answerText = tempDiv.Context || tempDiv.innerText || "";
+                const aTextNode = document.createTextNode(answerText);
+
+                // append all the nodes
+                qNode.appendChild(qTextNode);
+                aNode.appendChild(aTextNode);
+                trNode.appendChild(qNode);
+                trNode.appendChild(aNode);
+
+                // add to the table
+                document.getElementById('session-table-body').appendChild(trNode);
+
+                // clear the being fetched message
+                document.getElementById('fetching-status').innerText = '';
+              });
+            } catch (err) {
+              console.error(err);
+            }
+          } else {
+            console.log('sessions match, no need to fetch data');
+            if (state == 'disconnected') {
+              console.log('disconnected so clearing table');
+
+              // Empty the session ID field
+              document.getElementById('session-id').innerText = '';
+
+              // clear the table
+              const tableBodyNode = document.getElementById('session-table-body');
+              while (tableBodyNode.firstChild) {
+                tableBodyNode.removeChild(tableBodyNode.firstChild);
+              }
+            }
+          }
+        } else {
+          console.log('Agent is held, do nothing');
+        }
+      }
+    }
+  </script>
+</body>
+
+</html>
