@@ -157,10 +157,7 @@
             try {
               // get the transcript from server and display in the table
               const response = await fetch(
-                transUrl,
-                {
-                  mode: "no-cors"
-                }
+                transUrl
               );
               const jsonRes = await response.json();
               jsonRes.forEach(transaction => {
